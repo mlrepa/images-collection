@@ -6,11 +6,11 @@ joblib==1.0.1
 matplotlib==3.3.4
 more-itertools==8.7.0
 mlflow==1.14.1
-numpy==1.20.1
-pandas==1.2.3
+numpy==1.19.5
+pandas==1.1.5
 psycopg2-binary==2.8.6
 pyarrow==3.0.0
 pytest==6.2.2
 requests==2.25.1
 scikit-learn==0.24.1
-scipy==1.6.1
+scipy==1.5.4
