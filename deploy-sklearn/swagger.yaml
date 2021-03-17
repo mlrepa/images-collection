@@ -1,0 +1,58 @@
+openapi: 3.0.1
+info:
+  title: deploy-sklearn
+  description: "Deploy service for sklearn models"
+  termsOfService: http://swagger.io/terms/
+  contact:
+    email: apiteam@swagger.io
+  license:
+    name: Apache 2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0.html
+  version: 1.0.0
+servers:
+  - url: http://localhost:9000/
+
+paths:
+
+  /healthcheck:
+    get:
+      summary: Check connection
+      responses:
+        200:
+          description: OK
+
+
+  /reload-model:
+    post:
+      summary: Reload model
+      responses:
+        200:
+          description: "Model reloaded"
+
+
+  /predict:
+    post:
+      summary: Predict data
+      requestBody:
+        description: Data on predict
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                data:
+                  type: array
+                  items:
+                    type: array
+                    items:
+                      type: number
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: number
