@@ -104,21 +104,22 @@ class CMLDeployment:
         yes | sudo dpkg -i gitlab-runner_amd64.deb
         '''
         register_gitlab_runner = f'''
-            # Unregister old 
-            gitlab-runner unregister --name {self.gitlab_runner_name}
+        # Unregister old 
+        gitlab-runner unregister --name {self.gitlab_runner_name}
 
-            gitlab-runner register \\
-                --non-interactive \\
-                --name={self.gitlab_runner_name} \\
-                -u https://gitlab.com/ \\
-                -r {registration_token} \\
-                --tag-list {self.gitlab_runner_tags} \\
-                --executor docker \\
-                --docker-devices /dev/fuse \\
-                --docker-privileged '''
+        gitlab-runner register \
+            --non-interactive \
+            --name={self.gitlab_runner_name} \
+            -u https://gitlab.com/ \
+            -r {registration_token} \
+            --tag-list {self.gitlab_runner_tags} \
+            --executor docker \
+            --docker-devices /dev/fuse \
+            --docker-privileged '''
 
         if self.gitlab_runner_default_image:
-            register_gitlab_runner += f'\\ --docker-image {self.gitlab_runner_default_image} '
+            register_gitlab_runner += f'''\
+            --docker-image {self.gitlab_runner_default_image} '''
 
         if self.gitlab_runner_volumes:
             for volume in self.gitlab_runner_volumes.split(','):
@@ -139,8 +140,7 @@ class CMLDeployment:
         if self.gcp_bucket and self.gcp_bucket_mount_path:
             mount_bucket = f'''
             sudo mkdir -p {self.gcp_bucket_mount_path}
-            sudo gcsfuse {self.gcp_bucket} {self.gcp_bucket_mount_path}
-            '''
+            sudo gcsfuse {self.gcp_bucket} {self.gcp_bucket_mount_path} '''
 
         run_runner = 'sudo gitlab-runner run'
 
