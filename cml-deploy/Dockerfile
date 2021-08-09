@@ -5,5 +5,3 @@ RUN pip install --no-cache -r ./requirements.txt
 
 COPY deploy.py /usr/bin/deploy
 RUN chmod +x /usr/bin/deploy
-
-ENTRYPOINT ["/bin/bash", "-c"]
