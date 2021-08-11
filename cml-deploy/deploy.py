@@ -93,29 +93,37 @@ class CMLDeployment:
         echo "APT::Get::Assume-Yes \"true\";" | sudo tee -a /etc/apt/apt.conf.d/90assumeyes
         '''
         install_docker = '''
-        echo "Install Docker"
-        sudo curl -fsSL https://get.docker.com -o get-docker.sh && sudo sh get-docker.sh
-        sudo usermod -aG docker ubuntu
-        sudo chmod 666 /var/run/docker.sock
+        if ! which docker > /dev/null; then
+            echo "Install Docker"
+            sudo curl -fsSL https://get.docker.com -o get-docker.sh && sudo sh get-docker.sh
+            sudo usermod -aG docker ubuntu
+            sudo chmod 666 /var/run/docker.sock
+        fi
         '''
         install_gitlab_runner = '''
-        echo "Install GitLab runner"
-        curl -LJO "https://gitlab-runner-downloads.s3.amazonaws.com/latest/deb/gitlab-runner_amd64.deb"
-        yes | sudo dpkg -i gitlab-runner_amd64.deb
+        if ! which gitlab-runner > /dev/null; then
+            echo "Install GitLab runner"
+            curl -LJO "https://gitlab-runner-downloads.s3.amazonaws.com/latest/deb/gitlab-runner_amd64.deb"
+            yes | sudo dpkg -i gitlab-runner_amd64.deb
+        fi
         '''
         register_gitlab_runner = f'''
-        # Unregister old 
-        gitlab-runner unregister --name {self.gitlab_runner_name}
+        # Verify runner
+        sudo gitlab-runner verify --name {self.gitlab_runner_name}
 
-        gitlab-runner register \
-            --non-interactive \
-            --name={self.gitlab_runner_name} \
-            -u https://gitlab.com/ \
-            -r {registration_token} \
-            --tag-list {self.gitlab_runner_tags} \
-            --executor docker \
-            --docker-devices /dev/fuse \
-            --docker-privileged '''
+        if  [ $? -ne 0 ]; then
+            # Unregister old 
+            gitlab-runner unregister --name {self.gitlab_runner_name}
+
+            gitlab-runner register \
+                --non-interactive \
+                --name={self.gitlab_runner_name} \
+                -u https://gitlab.com/ \
+                -r {registration_token} \
+                --tag-list {self.gitlab_runner_tags} \
+                --executor docker \
+                --docker-devices /dev/fuse \
+                --docker-privileged '''
 
         if self.gitlab_runner_default_image:
             register_gitlab_runner += f'''\
@@ -126,13 +134,19 @@ class CMLDeployment:
                 register_gitlab_runner += f'''\
                 --docker-volumes {volume} '''
 
-        install_gcsfuse = '''
-        export GCSFUSE_REPO=gcsfuse-`lsb_release -c -s`
-        echo "deb http://packages.cloud.google.com/apt $GCSFUSE_REPO main" | sudo tee /etc/apt/sources.list.d/gcsfuse.list
-        curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo apt-key add -
+        register_gitlab_runner += f'''
+        fi
+        '''
 
-        sudo apt-get update
-        sudo apt-get install -y gcsfuse
+        install_gcsfuse = '''
+        if ! which gcsfuse > /dev/null; then
+            export GCSFUSE_REPO=gcsfuse-`lsb_release -c -s`
+            echo "deb http://packages.cloud.google.com/apt $GCSFUSE_REPO main" | sudo tee /etc/apt/sources.list.d/gcsfuse.list
+            curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo apt-key add -
+
+            sudo apt-get update
+            sudo apt-get install -y gcsfuse
+        fi
         '''
 
         mount_bucket = ''
@@ -142,7 +156,13 @@ class CMLDeployment:
             sudo mkdir -p {self.gcp_bucket_mount_path}
             sudo gcsfuse {self.gcp_bucket} {self.gcp_bucket_mount_path} '''
 
-        run_runner = 'sudo gitlab-runner run'
+        run_runner = '''
+        sudo gitlab-runner status
+
+        if  [ $? -ne 0 ]; then
+            sudo gitlab-runner start
+        fi
+        '''
 
         startup_script = f'''
         {header}
@@ -261,7 +281,6 @@ class CMLDeployment:
 
 
 def get_parser():
-
     parser = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter
