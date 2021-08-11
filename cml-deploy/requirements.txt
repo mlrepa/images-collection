@@ -1,0 +1,2 @@
+google-api-python-client==2.15.0
+python-gitlab==2.10.0
