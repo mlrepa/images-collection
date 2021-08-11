@@ -9,192 +9,54 @@ import time
 from typing import Dict, Optional, Text, Union
 
 
-class CMLDeployment:
+class GCEInstance:
 
     def __init__(
             self,
-            gcp_project: Text,
-            gcp_zone: Text,
-            gcp_machine_name: Text,
-            gcp_machine_type: Text,
+            project: Text,
+            zone: Text,
+            machine_name: Text,
+            machine_type: Text,
+            bucket: Optional[Text] = None,
+            bucket_mount_path: Optional[Text] = None,
+            startup_script: Optional[Text] = None
 
-            gitlab_access_token: Text,
-            gitlab_project_id: Union[int, Text],
-            gitlab_runner_name: Text,
-            gitlab_runner_tags: Text,
-
-            gcp_bucket: Optional[Text] = None,
-            gcp_bucket_mount_path: Optional[Text] = None,
-
-            gitlab_runner_default_image: Optional[Text] = None,
-            gitlab_runner_volumes: Optional[Text] = None
     ) -> None:
 
-        self.gcp_project = gcp_project
-        self.gcp_zone = gcp_zone
-        self.gcp_machine_name = gcp_machine_name
-        self.gcp_machine_type = gcp_machine_type
-        self.gcp_bucket = gcp_bucket
-        self.gcp_bucket_mount_path = gcp_bucket_mount_path
-
-        self.gitlab_access_token = gitlab_access_token
-        self.gitlab_project_id = gitlab_project_id
-        self.gitlab_runner_name = gitlab_runner_name
-        self.gitlab_runner_tags = gitlab_runner_tags
-        self.gitlab_runner_default_image = gitlab_runner_default_image
-        self.gitlab_runner_volumes = gitlab_runner_volumes
+        self.project = project
+        self.zone = zone
+        self.machine_name = machine_name
+        self.machine_type = machine_type
+        self.bucket = bucket
+        self.bucket_mount_path = bucket_mount_path
+        self.startup_script = startup_script
 
         self.compute = googleapiclient.discovery.build('compute', 'v1')
+        # TODO: add statuses Enum
+        self.status = None
 
-    def deploy(self) -> None:
+        self._get_status()
 
-        instances = self._list_instances()
-        # If instance with specified name does not exist then create it
-        if self.gcp_machine_name not in instances:
-            print('Creating instance.')
-            operation = self._create_instance()
-            self._wait_for_operation(operation['name'])
-        else:
-            print('Starting instance.')
-            # Check if the instance is stopped. If yes - run it
-            instance_status = instances[self.gcp_machine_name]['status']
-
-            if instance_status == 'TERMINATED':
-                operation = self._start_instance()
-                self._wait_for_operation(operation['name'])
-
-        instances = self._list_instances()
-
-        for name, params in instances.items():
-            print(f'{name}:{params["status"]}')
-
-    def _list_instances(self) -> Dict[Text, Dict]:
-
-        result = self.compute.instances().list(
-            project=self.gcp_project, zone=self.gcp_zone
-        ).execute()
-        instances = {}
-
-        if 'items' in result:
-
-            for item in result['items']:
-                instance_name = item.pop('name')
-                instances[instance_name] = item
-
-        return instances
-
-    def _build_startup_script(self) -> Text:
-
-        registration_token = self._gitlab_runner_reg_token()
-
-        header = '#!/bin/sh'
-        settings = '''
-        export DEBIAN_FRONTEND=noninteractive
-        echo "APT::Get::Assume-Yes \"true\";" | sudo tee -a /etc/apt/apt.conf.d/90assumeyes
-        '''
-        install_docker = '''
-        if ! which docker > /dev/null; then
-            echo "Install Docker"
-            sudo curl -fsSL https://get.docker.com -o get-docker.sh && sudo sh get-docker.sh
-            sudo usermod -aG docker ubuntu
-            sudo chmod 666 /var/run/docker.sock
-        fi
-        '''
-        install_gitlab_runner = '''
-        if ! which gitlab-runner > /dev/null; then
-            echo "Install GitLab runner"
-            curl -LJO "https://gitlab-runner-downloads.s3.amazonaws.com/latest/deb/gitlab-runner_amd64.deb"
-            yes | sudo dpkg -i gitlab-runner_amd64.deb
-        fi
-        '''
-        register_gitlab_runner = f'''
-        # Verify runner
-        sudo gitlab-runner verify --name {self.gitlab_runner_name}
-
-        if  [ $? -ne 0 ]; then
-            # Unregister old 
-            gitlab-runner unregister --name {self.gitlab_runner_name}
-
-            gitlab-runner register \
-                --non-interactive \
-                --name={self.gitlab_runner_name} \
-                -u https://gitlab.com/ \
-                -r {registration_token} \
-                --tag-list {self.gitlab_runner_tags} \
-                --executor docker \
-                --docker-devices /dev/fuse \
-                --docker-privileged '''
-
-        if self.gitlab_runner_default_image:
-            register_gitlab_runner += f'''\
-            --docker-image {self.gitlab_runner_default_image} '''
-
-        if self.gitlab_runner_volumes:
-            for volume in self.gitlab_runner_volumes.split(','):
-                register_gitlab_runner += f'''\
-                --docker-volumes {volume} '''
-
-        register_gitlab_runner += f'''
-        fi
-        '''
-
-        install_gcsfuse = '''
-        if ! which gcsfuse > /dev/null; then
-            export GCSFUSE_REPO=gcsfuse-`lsb_release -c -s`
-            echo "deb http://packages.cloud.google.com/apt $GCSFUSE_REPO main" | sudo tee /etc/apt/sources.list.d/gcsfuse.list
-            curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo apt-key add -
-
-            sudo apt-get update
-            sudo apt-get install -y gcsfuse
-        fi
-        '''
-
-        mount_bucket = ''
-
-        if self.gcp_bucket and self.gcp_bucket_mount_path:
-            mount_bucket = f'''
-            sudo mkdir -p {self.gcp_bucket_mount_path}
-            sudo gcsfuse {self.gcp_bucket} {self.gcp_bucket_mount_path} '''
-
-        run_runner = '''
-        sudo gitlab-runner status
-
-        if  [ $? -ne 0 ]; then
-            sudo gitlab-runner start
-        fi
-        '''
-
-        startup_script = f'''
-        {header}
-
-        {settings}
-
-        {install_docker}
-
-        {install_gitlab_runner}
-
-        {register_gitlab_runner}
-
-        {install_gcsfuse}
-
-        {mount_bucket}
-
-        {run_runner}
-        '''
-
-        return startup_script
-
-    def _create_instance(self) -> object:
+    def create_instance(self) -> object:
         # Get ubuntu image
         image_response = self.compute.images().getFromFamily(
             project='ubuntu-os-cloud', family='ubuntu-2004-lts'
         ).execute()
         source_disk_image = image_response['selfLink']
         # Configure the machine
-        machine_type = f'zones/{self.gcp_zone}/machineTypes/{self.gcp_machine_type}'
-        startup_script = self._build_startup_script()
+        machine_type = f'zones/{self.zone}/machineTypes/{self.machine_type}'
+        metadata_items = []
+
+        if self.startup_script:
+            metadata_items.append({
+                # Startup script is automatically executed by the
+                # instance upon startup.
+                'key': 'startup-script',
+                'value': self.startup_script
+            })
+
         config = {
-            'name': self.gcp_machine_name,
+            'name': self.machine_name,
             'machineType': machine_type,
 
             # Specify the boot disk and the image to use as a source.
@@ -223,40 +85,31 @@ class CMLDeployment:
             }],
             # Metadata is readable from the instance and allows you to
             # pass configuration from deployment scripts to instances.
-            'metadata': {
-                'items': [
-                    {
-                        # Startup script is automatically executed by the
-                        # instance upon startup.
-                        'key': 'startup-script',
-                        'value': startup_script
-                    }
-                ]
-            }
+            'metadata': {'items': metadata_items}
         }
 
         return self.compute.instances().insert(
-            project=self.gcp_project,
-            zone=self.gcp_zone,
+            project=self.project,
+            zone=self.zone,
             body=config
         ).execute()
 
-    def _start_instance(self) -> object:
+    def start_instance(self) -> object:
         return self.compute.instances().start(
-            project=self.gcp_project,
-            zone=self.gcp_zone,
-            instance=self.gcp_machine_name
+            project=self.project,
+            zone=self.zone,
+            instance=self.machine_name
         ).execute()
 
-    def _wait_for_operation(self, operation_name: Text) -> None:
+    def wait_for_operation(self, operation_name: Text) -> None:
 
         print('Waiting for operation to finish...')
 
         while True:
 
             result = self.compute.zoneOperations().get(
-                project=self.gcp_project,
-                zone=self.gcp_zone,
+                project=self.project,
+                zone=self.zone,
                 operation=operation_name
             ).execute()
 
@@ -271,13 +124,209 @@ class CMLDeployment:
 
             time.sleep(1)
 
-    def _gitlab_runner_reg_token(self):
+    def exists(self) -> bool:
 
-        gl = gitlab.Gitlab('https://gitlab.com', private_token=self.gitlab_access_token)
+        if self.status in ['RUNNING', 'TERMINATED']:
+            return True
+
+        return False
+
+    def set_startup_script(self, startup_script) -> None:
+        self.startup_script = startup_script
+
+    def _get_status(self) -> None:
+
+        instances = self._list_instances()
+        # If instance with specified name does not exist then create it
+        if self.machine_name not in instances:
+            self.status = 'NONEXISTENT'
+        else:
+            # Check if the instance is stopped. If yes - run it
+            self.status = instances[self.machine_name]['status']
+
+    def _list_instances(self) -> Dict[Text, Dict]:
+
+        result = self.compute.instances().list(
+            project=self.project, zone=self.zone
+        ).execute()
+        instances = {}
+
+        if 'items' in result:
+
+            for item in result['items']:
+                instance_name = item.pop('name')
+                instances[instance_name] = item
+
+        return instances
+
+
+class GitlabRunner:
+
+    def __init__(
+            self,
+            access_token: Text,
+            project_id: Union[int, Text],
+            name: Text,
+            tags: Text,
+            default_image: Optional[Text] = None,
+            volumes: Optional[Text] = None
+
+    ) -> None:
+
+        self.access_token = access_token
+        self.project_id = project_id
+        self.name = name
+        self.tags = tags
+        self.default_image = default_image
+        self.volumes = volumes
+
+    def registration_command(self) -> Text:
+
+        reg_token = self._registration_token()
+
+        register_gitlab_runner = f'''
+        # Verify runner
+        sudo gitlab-runner verify --name {self.name}
+
+        if  [ $? -ne 0 ]; then
+            # Unregister old 
+            gitlab-runner unregister --name {self.name}
+
+            gitlab-runner register \
+                --non-interactive \
+                --name={self.name} \
+                -u https://gitlab.com/ \
+                -r {reg_token} \
+                --tag-list {self.tags} \
+                --executor docker \
+                --docker-devices /dev/fuse \
+                --docker-privileged '''
+
+        if self.default_image:
+            register_gitlab_runner += f'''\
+            --docker-image {self.default_image} '''
+
+        if self.volumes:
+            for volume in self.volumes.split(','):
+                register_gitlab_runner += f'''\
+                --docker-volumes {volume} '''
+
+        register_gitlab_runner += f'''
+        fi
+        '''
+
+        return register_gitlab_runner
+
+    def _registration_token(self):
+
+        gl = gitlab.Gitlab('https://gitlab.com', private_token=self.access_token)
         gl.auth()
-        project = gl.projects.get(self.gitlab_project_id)
+        project = gl.projects.get(self.project_id)
 
         return project.attributes['runners_token']
+
+
+class CMLDeployment:
+
+    def __init__(
+            self,
+            instance: GCEInstance,
+            runner: GitlabRunner
+    ) -> None:
+
+        self.instance = instance
+        self.runner = runner
+
+    def deploy(self) -> None:
+
+        # If instance with specified name does not exist then create it
+        if not self.instance.exists():
+
+            print('Creating instance.')
+            startup_script = self._build_startup_script()
+            self.instance.set_startup_script(startup_script)
+            operation = self.instance.create_instance()
+            self.instance.wait_for_operation(operation['name'])
+
+        else:
+
+            print('Starting instance.')
+
+            if self.instance.status == 'TERMINATED':
+                operation = self.instance.start_instance()
+                self.instance.wait_for_operation(operation['name'])
+
+    def _build_startup_script(self) -> Text:
+
+        header = '#!/bin/sh'
+        settings = '''
+        export DEBIAN_FRONTEND=noninteractive
+        echo "APT::Get::Assume-Yes \"true\";" | sudo tee -a /etc/apt/apt.conf.d/90assumeyes
+        '''
+        install_docker = '''
+        if ! which docker > /dev/null; then
+            echo "Install Docker"
+            sudo curl -fsSL https://get.docker.com -o get-docker.sh && sudo sh get-docker.sh
+            sudo usermod -aG docker ubuntu
+            sudo chmod 666 /var/run/docker.sock
+        fi
+        '''
+        install_gitlab_runner = '''
+        if ! which gitlab-runner > /dev/null; then
+            echo "Install GitLab runner"
+            curl -LJO "https://gitlab-runner-downloads.s3.amazonaws.com/latest/deb/gitlab-runner_amd64.deb"
+            yes | sudo dpkg -i gitlab-runner_amd64.deb
+        fi
+        '''
+        register_gitlab_runner = self.runner.registration_command()
+
+        install_gcsfuse = '''
+        if ! which gcsfuse > /dev/null; then
+            export GCSFUSE_REPO=gcsfuse-`lsb_release -c -s`
+            echo "deb http://packages.cloud.google.com/apt $GCSFUSE_REPO main" | sudo tee /etc/apt/sources.list.d/gcsfuse.list
+            curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo apt-key add -
+
+            sudo apt-get update
+            sudo apt-get install -y gcsfuse
+        fi
+        '''
+
+        mount_bucket = ''
+        bucket = self.instance.bucket
+        mount_path = self.instance.bucket_mount_path
+
+        if bucket and mount_path:
+            mount_bucket = f'''
+            sudo mkdir -p {mount_path}
+            sudo gcsfuse {bucket} {mount_path} '''
+
+        run_runner = '''
+        sudo gitlab-runner status
+
+        if  [ $? -ne 0 ]; then
+            sudo gitlab-runner start
+        fi
+        '''
+
+        startup_script = f'''
+        {header}
+
+        {settings}
+
+        {install_docker}
+
+        {install_gitlab_runner}
+
+        {register_gitlab_runner}
+
+        {install_gcsfuse}
+
+        {mount_bucket}
+
+        {run_runner}
+        '''
+
+        return startup_script
 
 
 def get_parser():
@@ -373,21 +422,23 @@ def main():
 
     gcp_project = gac['project_id']
 
-    cml_deployment = CMLDeployment(
-        gcp_project=gcp_project,
-        gcp_zone=args.gcp_zone,
-        gcp_machine_name=args.gcp_machine_name,
-        gcp_machine_type=args.gcp_machine_type,
-        gcp_bucket=args.gcp_bucket,
-        gcp_bucket_mount_path=args.gcp_bucket_mount_path,
-        gitlab_access_token=args.gitlab_access_token,
-        gitlab_project_id=args.gitlab_project_id,
-        gitlab_runner_name=args.gitlab_runner_name,
-        gitlab_runner_tags=args.gitlab_runner_tags,
-        gitlab_runner_default_image=args.gitlab_runner_default_image,
-        gitlab_runner_volumes=args.gitlab_runner_volumes
+    instance = GCEInstance(
+        project=gcp_project,
+        zone=args.gcp_zone,
+        machine_name=args.gcp_machine_name,
+        machine_type=args.gcp_machine_type,
+        bucket=args.gcp_bucket,
+        bucket_mount_path=args.gcp_bucket_mount_path
     )
-
+    runner = GitlabRunner(
+        access_token=args.gitlab_access_token,
+        project_id=args.gitlab_project_id,
+        name=args.gitlab_runner_name,
+        tags=args.gitlab_runner_tags,
+        default_image=args.gitlab_runner_default_image,
+        volumes=args.gitlab_runner_volumes
+    )
+    cml_deployment = CMLDeployment(instance=instance, runner=runner)
     cml_deployment.deploy()
 
 
