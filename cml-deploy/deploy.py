@@ -330,6 +330,7 @@ class CMLDeployment:
 
 
 def get_parser():
+
     parser = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter
@@ -405,17 +406,12 @@ def get_parser():
 
 
 def main():
+
     args_parser = get_parser()
     args = args_parser.parse_args()
 
-    required_env_vars = [
-        'GOOGLE_APPLICATION_CREDENTIALS',
-        'repo_token'
-    ]
-
-    for env_var in required_env_vars:
-        if not os.getenv(env_var):
-            raise EnvironmentError(f'Environment variable {env_var} not defined')
+    if not os.getenv('GOOGLE_APPLICATION_CREDENTIALS'):
+        raise EnvironmentError(f'Environment variable GOOGLE_APPLICATION_CREDENTIALS not defined')
 
     with open(os.getenv('GOOGLE_APPLICATION_CREDENTIALS')) as gac_f:
         gac = json.load(gac_f)
