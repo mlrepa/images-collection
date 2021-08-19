@@ -37,7 +37,7 @@ class GCEInstance:
 
         self._get_status()
 
-    def create_instance(self) -> object:
+    def create(self) -> object:
         # Get ubuntu image
         image_response = self.compute.images().getFromFamily(
             project='ubuntu-os-cloud', family='ubuntu-2004-lts'
@@ -94,8 +94,22 @@ class GCEInstance:
             body=config
         ).execute()
 
-    def start_instance(self) -> object:
+    def start(self) -> object:
         return self.compute.instances().start(
+            project=self.project,
+            zone=self.zone,
+            instance=self.machine_name
+        ).execute()
+
+    def stop(self) -> object:
+        return self.compute.instances().stop(
+            project=self.project,
+            zone=self.zone,
+            instance=self.machine_name
+        ).execute()
+
+    def delete(self) -> object:
+        return self.compute.instances().delete(
             project=self.project,
             zone=self.zone,
             instance=self.machine_name
@@ -245,7 +259,7 @@ class CMLDeployment:
             print('Creating instance.')
             startup_script = self._build_startup_script()
             self.instance.set_startup_script(startup_script)
-            operation = self.instance.create_instance()
+            operation = self.instance.create()
             self.instance.wait_for_operation(operation['name'])
 
         else:
@@ -253,7 +267,7 @@ class CMLDeployment:
             print('Starting instance.')
 
             if self.instance.status == 'TERMINATED':
-                operation = self.instance.start_instance()
+                operation = self.instance.start()
                 self.instance.wait_for_operation(operation['name'])
 
     def _build_startup_script(self) -> Text:
@@ -335,6 +349,7 @@ def get_parser():
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
+    parser.add_argument('action', choices=['deploy', 'stop', 'delete'])
     parser.add_argument(
         '--gcp-zone',
         dest='gcp_zone',
@@ -426,16 +441,27 @@ def main():
         bucket=args.gcp_bucket,
         bucket_mount_path=args.gcp_bucket_mount_path
     )
-    runner = GitlabRunner(
-        access_token=args.gitlab_access_token,
-        project_id=args.gitlab_project_id,
-        name=args.gitlab_runner_name,
-        tags=args.gitlab_runner_tags,
-        default_image=args.gitlab_runner_default_image,
-        volumes=args.gitlab_runner_volumes
-    )
-    cml_deployment = CMLDeployment(instance=instance, runner=runner)
-    cml_deployment.deploy()
+
+    if args.action == 'deploy':
+        runner = GitlabRunner(
+            access_token=args.gitlab_access_token,
+            project_id=args.gitlab_project_id,
+            name=args.gitlab_runner_name,
+            tags=args.gitlab_runner_tags,
+            default_image=args.gitlab_runner_default_image,
+            volumes=args.gitlab_runner_volumes
+        )
+        cml_deployment = CMLDeployment(instance=instance, runner=runner)
+        cml_deployment.deploy()
+
+    elif args.action == 'stop':
+        instance.stop()
+
+    elif args.action == 'delete':
+        instance.delete()
+
+    else:
+        raise ValueError(f'Invalid action {args.action}')
 
 
 if __name__ == '__main__':
