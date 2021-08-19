@@ -443,6 +443,7 @@ def main():
     )
 
     if args.action == 'deploy':
+
         runner = GitlabRunner(
             access_token=args.gitlab_access_token,
             project_id=args.gitlab_project_id,
@@ -455,13 +456,20 @@ def main():
         cml_deployment.deploy()
 
     elif args.action == 'stop':
-        instance.stop()
+
+        print('Stopping instance')
+        operation = instance.stop()
 
     elif args.action == 'delete':
-        instance.delete()
+
+        print('Deleting instance')
+        operation = instance.delete()
 
     else:
+
         raise ValueError(f'Invalid action {args.action}')
+
+    instance.wait_for_operation(operation['name'])
 
 
 if __name__ == '__main__':
