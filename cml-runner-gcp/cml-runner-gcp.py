@@ -459,17 +459,16 @@ def main():
 
         print('Stopping instance')
         operation = instance.stop()
+        instance.wait_for_operation(operation['name'])
 
     elif args.action == 'delete':
 
         print('Deleting instance')
         operation = instance.delete()
+        instance.wait_for_operation(operation['name'])
 
     else:
-
         raise ValueError(f'Invalid action {args.action}')
-
-    instance.wait_for_operation(operation['name'])
 
 
 if __name__ == '__main__':
