@@ -1,4 +1,4 @@
-FROM dvcorg/cml-py3:latest
+FROM dvcorg/cml:latest
 
 COPY ./requirements.txt ./requirements.txt
 
